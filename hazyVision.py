@@ -8,6 +8,7 @@ def draw_static(img, connected):
     bg = np.zeros((img.shape[0], WIDTH_PX, 3), dtype=np.uint8)
     bg[:,X_OFFSET:X_OFFSET+WEBCAM_WIDTH_PX,:] = img
     cv.rectangle(bg, (search[0]+X_OFFSET,search[1]+CONNECTED_BORDER), ((search[2]-search[0])/2+X_OFFSET,search[3]+CONNECTED_BORDER), (255,0,0), 5)
+    cv.rectangle(bg, (WIDTH_PX-(search[0]+X_OFFSET),search[1]+CONNECTED_BORDER),(WIDTH_PX-((search[2]-search[0])/2+X_OFFSET),search[3]+CONNECTED_BORDER), (255,0,0), 5)
     #cv.rectangle(bg, ((search[2]-search[0])/2+X_OFFSET,search[1]+CONNECTED_BORDER), ((search[2])+X_OFFSET,search[3]+CONNECTED_BORDER), (255,0,0), 5)
     if connected:
         cv.rectangle(bg, (0, 0), (bg.shape[1]-1, bg.shape[0]-1), (0, 255, 0), CONNECTED_BORDER)
@@ -117,6 +118,19 @@ def get_time_millis():
     ''' Get the current time in milliseconds. '''
     return int(round(time.time() * 1000))
 
+def getSpeed(x):
+    leftBound = search[0]+X_OFFSET
+    rightBound = (search[2]-search[0])/2+X_OFFSET
+    centerLine = WIDTH_PX/2
+    toLeft = 1
+    if (x > centerLine):
+        x = centerLine-(x-centerLine)
+        toLeft = 0
+    x -= 260
+    if (x>0 and x < 420):
+        return toLeft,int(round(0.00000742857*x**3-0.00360679*x**2+0.580664*x,0))
+    return 0,0
+
 def main():
     cv.namedWindow(WINDOW_NAME,1)
     
@@ -139,38 +153,55 @@ def main():
         #draw
         bg = draw_static(small_img, False)
         red,green = finder(bg)
+        boxCenterX = 0
+        boxCenterY = 0
+        driveRight = False
+        driveLeft  = False
+        leftStick  = False
+        rightStick = False
         if len(red)>0:
             x,y,w,h = cv.boundingRect(red[0])
+            boxCenterX = x+w/2
+            boxCenterY = y+h/2
             cv.rectangle(bg,(x,y),(x+w,y+h),(0,255,0),2)
+            leftStick = True
         if len(green)>0:
             x,y,w,h = cv.boundingRect(green[0])
+            boxCenterX = x+w/2
+            boxCenterY = y+h/2
             cv.rectangle(bg,(x,y),(x+w,y+h),(0,0,255),2)
+            rightStick = True
         cv.rectangle(bg,(search[0]+X_OFFSET,search[1]+CONNECTED_BORDER), (search[2]+X_OFFSET, search[3]+CONNECTED_BORDER), (255,0,0), 2)
 
         cv.imshow(WINDOW_NAME,bg)
         keyPress = cv.waitKey(10) & 255
 
-
         # To send data to robot
         # It will follow the format (as the bits of the number being the booleans
-        # 0x1: isRed
-        # 0x2: isGreen
-        # 0x4: isLeft
-        # 0x8: isRight
-        # Try to connect to the robot on open or disconnect
+        # 0x32: isRed
+        # 0x64: isGreen
+        # 0x128: driveRight
+        
+        # 0x1:   speed 1
+        # 0x2:  speed 2
+        # 0x4:  speed 3
+        # 0x8:  speed 4
+        # 0x16: speed 5
         isRed = 0
         isGreen = 0
-        isLeft = 0
-        isRight = 0
-        if (leftStick):
+        if leftStick:
             isRed = 1
         if rightStick:
             isGreen = 1
-        if driveLeft:
-            isLeft = 1
-        if driveRight:
-            isRight = 1
+        isLeft, speed = getSpeed(boxCenterX)
+        speedStr = '{0:08b}'.format(speed)
+        speed1 = int(speedStr[7])
+        speed2 = int(speedStr[6])
+        speed3 = int(speedStr[5])
+        speed4 = int(speedStr[4])
+        speed5 = int(speedStr[3])
         cur_time = get_time_millis()
+        # Try to connect to the robot on open or disconnect
         if last_t+PERIOD <= cur_time:
             if not connected:
                 try:
@@ -187,7 +218,8 @@ def main():
             try:    
                 # Send one byte to the cRIO:
                 write_bytes = bytearray()
-                v = (isRed << 0) | (isGreen << 1) | (isLeft << 2) | (isRight << 3)
+                speed1 = getSpeed(boxCenterX, driveRight)
+                v = (speed1 << 0) | (speed2 << 1) | (speed3 << 2) | (speed4 << 3) | (speed5 << 4) | (isRed << 5) | (isGreen << 6) | (isLeft << 7)
                 write_bytes.append(v)
                 s.send(write_bytes)
                 connected = True
